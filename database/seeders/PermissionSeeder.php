@@ -41,6 +41,10 @@ class PermissionSeeder extends Seeder
         Permission::firstOrCreate(['name' => 'manage_org_chart', 'label' => 'مدیریت چارت سازمانی']);
         // سامانه ثبت بیماری (Discussion #1160، تصمیم ۱۷)
         Permission::query()->firstOrCreate(['name' => 'manage_diseases', 'label' => 'مدیریت بیماری‌ها و فیلدها']);
+        // بخش مقالات (بلاگ داخلی داشبورد) — فقط admin؛ مثل manage_diseases
+        // به مدیر واحد داده نمی‌شود. پیش از گیت‌کردن روت/سایدبار روی آن
+        // سید شده تا canAny() روی دیتابیس موجود 403 خاموش ندهد.
+        Permission::query()->firstOrCreate(['name' => 'manage_articles', 'label' => 'مدیریت مقالات']);
         // The admin ROLE — tests (TicketApiTest, TicketCommentPolicyTest, ...)
         // each had to firstOrCreate it; centralizing here keeps that convention
         // in one place. RoleSeeder re-syncs every permission onto this role;
@@ -63,6 +67,9 @@ class PermissionSeeder extends Seeder
         // صفحهٔ مدیریت بیماری‌ها (Issue #1242) — یک اجرای تک‌کلاسهٔ این سیدر
         // باید ادمین را مجاز نگه دارد؛ RoleSeeder همگام‌سازی کامل را انجام می‌دهد.
         $adminRole->givePermissionTo('manage_diseases');
+        // بخش مقالات — یک اجرای تک‌کلاسه‌ی این سیدر باید ادمین را مجاز
+        // نگه دارد؛ RoleSeeder همگام‌سازی کامل را انجام می‌دهد.
+        $adminRole->givePermissionTo('manage_articles');
         // update cache to know about the newly created permissions (required if using WithoutModelEvents in seeders)
         app()[PermissionRegistrar::class]->forgetCachedPermissions();
 

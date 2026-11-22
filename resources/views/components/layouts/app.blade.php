@@ -278,6 +278,17 @@
                 </x-menu-sub>
                 @endcanany
 
+                {{-- مقالات (بلاگ داخلی داشبورد) — گیت منو و گیت هر دو روت
+                     یکی است: `role_or_permission:manage_articles`. --}}
+                @can('manage_articles')
+                <x-menu-sub title="مقالات" icon="o-newspaper">
+                    {{-- بدون `:exact`: صفحهٔ نمایش مقاله (`/articles/{id}`)
+                         ورودی مستقل در منو ندارد و باید همین آیتم را هایلایت
+                         کند — همان قرارداد `/units/chart` ← `/units` (#1531). --}}
+                    <x-menu-item title="مقالات" icon="o-newspaper" link="/articles" wire:navigate />
+                </x-menu-sub>
+                @endcan
+
                 {{-- بیماری‌ها (#1246) — گیت منو و گیت هر چهار روت یکی است:
                      `role_or_permission:manage_diseases`. --}}
                 @can('manage_diseases')

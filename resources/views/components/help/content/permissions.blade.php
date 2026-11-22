@@ -60,6 +60,7 @@
         <div class="grid grid-cols-2 gap-2 text-sm">
             <span class="badge badge-outline">manage_users</span> <span class="text-base-content/70">مدیریت کاربران، گزارش فعالیت و ابزارها</span>
             <span class="badge badge-outline">manage_roles</span> <span class="text-base-content/70">مدیریت نقش‌ها و دسترسی‌ها</span>
+            <span class="badge badge-outline">manage_articles</span> <span class="text-base-content/70">مدیریت مقالات (بلاگ داخلی داشبورد)</span>
         </div>
     </div>
 

@@ -166,6 +166,14 @@ Route::middleware('auth')->group(function () {
             Route::livewire('/todo', 'todo.todo');
         });
 
+        // بخش مقالات (بلاگ داخلی داشبورد) — گیت منو و گیت هر دو روت یکی
+        // است: `manage_articles`. مقالات سراسری‌اند و unit-scoped نیستند؛
+        // نویسنده کاربرِ سازنده است و وضعیت انتشار پیش‌نویس/منتشرشده دارد.
+        Route::middleware('role_or_permission:manage_articles')->group(function () {
+            Route::livewire('/articles', 'articles.index')->name('articles.index');
+            Route::livewire('/articles/{id}', 'articles.show')->name('articles.show');
+        });
+
         Route::middleware('role_or_permission:view_all_tickets')->group(function () {
             Route::livewire('/monitoring', 'tickets.monitoring')->name('tickets.monitoring');
         });

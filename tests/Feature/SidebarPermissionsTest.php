@@ -53,6 +53,8 @@ class SidebarPermissionsTest extends TestCase
         '/disease/patients' => ['manage_diseases'],
         '/disease/manage' => ['manage_diseases'],
         '/todo' => ['calendar'],
+        // بخش مقالات — گیت منو و گیت هر دو روت یکی است: `manage_articles`.
+        '/articles' => ['manage_articles'],
         '/roles' => ['manage_roles'],
         // Issue #897: /search stays visible to EVERY authenticated account
         // (no @can on the menu item, no role_or_permission on the route —
@@ -62,7 +64,7 @@ class SidebarPermissionsTest extends TestCase
         // lists every known permission: each holder sees it, and the
         // unrelated-permission loop below stays vacuous. When adding a new
         // permission to this map, append it here too.
-        '/search' => ['map', 'bw', 'manage_zabbix', 'manage_users', 'manage_hardware', 'manage_personnel', 'view_hr_dashboard', 'manage_org_chart', 'kargozini', 'organization', 'calendar', 'manage_roles', 'manage_diseases'],
+        '/search' => ['map', 'bw', 'manage_zabbix', 'manage_users', 'manage_hardware', 'manage_personnel', 'view_hr_dashboard', 'manage_org_chart', 'kargozini', 'organization', 'calendar', 'manage_roles', 'manage_diseases', 'manage_articles'],
     ];
 
     protected function setUp(): void
