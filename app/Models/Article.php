@@ -67,6 +67,14 @@ class Article extends Model
                 $article->slug = static::uniqueSlug(static::makeSlug($article->title));
             }
         });
+
+        // خلاصه‌ی خالی از ابتدای متن ساخته می‌شود تا مقاله هیچ‌وقت بدون
+        // خلاصه نماند؛ خلاصه‌ی دستی همیشه دست‌نخورده می‌ماند.
+        static::saving(function (Article $article): void {
+            if (($article->excerpt === null || trim($article->excerpt) === '') && trim((string) $article->body) !== '') {
+                $article->excerpt = static::excerptFromBody($article->body);
+            }
+        });
     }
 
     public function user(): BelongsTo
@@ -110,6 +118,27 @@ class Article extends Model
         $slug = trim($slug, '-');
 
         return $slug === '' ? 'article' : $slug;
+    }
+
+    /**
+     * خلاصه از متن: ۲۰۰ نویسه‌ی اول تا مرز کلمه، با «…» در صورت برش.
+     */
+    public static function excerptFromBody(string $body): string
+    {
+        $text = preg_replace('/\s+/u', ' ', trim($body)) ?? '';
+
+        if (mb_strlen($text) <= 200) {
+            return $text;
+        }
+
+        $cut = mb_substr($text, 0, 200);
+        $lastSpace = mb_strrpos($cut, ' ');
+
+        if ($lastSpace !== false) {
+            $cut = mb_substr($cut, 0, $lastSpace);
+        }
+
+        return $cut.'…';
     }
 
     private static function uniqueSlug(string $base): string

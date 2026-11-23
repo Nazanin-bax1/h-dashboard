@@ -44,6 +44,28 @@ return new class extends Component
         $this->authorize('manage_articles');
     }
 
+    // تغییر جستجو یا فیلترها صفحه را به اول برمی‌گرداند؛ وگرنه صفحه‌ی
+    // ۲ به‌بعدِ لیستِ فیلترشده خالی می‌ماند.
+    public function updatingSearch(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatingStatusFilter(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatingCategoryFilter(): void
+    {
+        $this->resetPage();
+    }
+
+    public function updatingPerPage(): void
+    {
+        $this->resetPage();
+    }
+
     public function cancelEdit(): void
     {
         $this->resetValidation();

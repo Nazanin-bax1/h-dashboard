@@ -108,6 +108,42 @@ test('duplicate titles get unique slugs', function () {
     ]);
 });
 
+test('blank excerpt is generated from the body', function () {
+    $this->actingAs($this->user);
+
+    Livewire::test('articles.index')
+        ->set('title', 'مقاله بدون خلاصه')
+        ->set('category', 'news')
+        ->set('body', 'متن کامل مقاله بدون خلاصه')
+        ->set('status', 'draft')
+        ->call('createArticle')
+        ->assertHasNoErrors();
+
+    $this->assertDatabaseHas('articles', [
+        'title' => 'مقاله بدون خلاصه',
+        'excerpt' => 'متن کامل مقاله بدون خلاصه',
+    ]);
+});
+
+test('clearing the excerpt on edit regenerates it from the body', function () {
+    $this->actingAs($this->user);
+
+    $article = Article::factory()->create([
+        'title' => 'مقاله با خلاصه',
+        'excerpt' => 'خلاصه دستی',
+        'body' => 'متن تازه مقاله',
+        'user_id' => $this->user->id,
+    ]);
+
+    Livewire::test('articles.index')
+        ->call('editArticle', $article->id)
+        ->set('excerpt', '')
+        ->call('updateArticle')
+        ->assertHasNoErrors();
+
+    expect(Article::findOrFail($article->id)->excerpt)->toBe('متن تازه مقاله');
+});
+
 test('edit article via livewire', function () {
     $this->actingAs($this->user);
 
@@ -188,6 +224,20 @@ test('search filters the article list by title', function () {
         ->set('search', 'شبکه')
         ->assertSee('آموزش شبکه')
         ->assertDontSee('خبر سلامت');
+});
+
+test('changing the search resets to the first page', function () {
+    $this->actingAs($this->user);
+
+    foreach (range(1, 24) as $i) {
+        Article::factory()->create(['title' => "مقاله شماره {$i}", 'user_id' => $this->user->id]);
+    }
+    Article::factory()->create(['title' => 'مقاله خاص جستجو', 'user_id' => $this->user->id]);
+
+    Livewire::test('articles.index')
+        ->set('page', 2)
+        ->set('search', 'خاص')
+        ->assertSee('مقاله خاص جستجو');
 });
 
 test('show page renders the article body and author', function () {
