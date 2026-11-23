@@ -6,12 +6,15 @@ use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Locked;
 use Livewire\Component;
+use Livewire\Features\SupportFileUploads\TemporaryUploadedFile;
+use Livewire\WithFileUploads;
 use Livewire\WithPagination;
 use Mary\Traits\Toast;
 
 return new class extends Component
 {
     use Toast;
+    use WithFileUploads;
     use WithPagination;
 
     public string $title = '';
@@ -19,6 +22,16 @@ return new class extends Component
     public string $category = 'news';
 
     public ?string $excerpt = null;
+
+    public ?TemporaryUploadedFile $coverImage = null;
+
+    // مسیر ذخیره‌شده‌ی تصویر شاخص در حال ویرایش؛ `null` یعنی مقاله
+    // تصویری ندارد. آپلود تازه جای آن را می‌گیرد.
+    public ?string $coverImagePath = null;
+
+    // URL نمایشی تصویر فعلی در فرم ویرایش؛ با آپلود تازه یا حذف،
+    // خالی می‌شود.
+    public ?string $coverImageUrl = null;
 
     public string $body = '';
 
@@ -69,7 +82,7 @@ return new class extends Component
     public function cancelEdit(): void
     {
         $this->resetValidation();
-        $this->reset(['title', 'category', 'excerpt', 'body', 'status', 'editingId', 'showForm']);
+        $this->reset(['title', 'category', 'excerpt', 'body', 'status', 'editingId', 'showForm', 'coverImage', 'coverImagePath', 'coverImageUrl']);
         $this->category = 'news';
         $this->status = 'draft';
     }
@@ -78,7 +91,7 @@ return new class extends Component
     {
         $this->authorize('manage_articles');
         $this->resetValidation();
-        $this->reset(['title', 'category', 'excerpt', 'body', 'status', 'editingId']);
+        $this->reset(['title', 'category', 'excerpt', 'body', 'status', 'editingId', 'coverImage', 'coverImagePath', 'coverImageUrl']);
         $this->category = 'news';
         $this->status = 'draft';
         $this->showForm = true;
@@ -93,6 +106,7 @@ return new class extends Component
             'title' => $data['title'],
             'category' => $data['category'],
             'excerpt' => $data['excerpt'],
+            'cover_image' => $this->storeCoverImage(),
             'body' => $data['body'],
             'status' => $data['status'],
             'published_at' => $data['status'] === 'published' ? now() : null,
@@ -114,6 +128,9 @@ return new class extends Component
         $this->title = $article->title;
         $this->category = $article->category;
         $this->excerpt = $article->excerpt;
+        $this->coverImage = null;
+        $this->coverImagePath = $article->cover_image;
+        $this->coverImageUrl = $article->coverImageUrl();
         $this->body = $article->body;
         $this->status = $article->status;
         // ویرایش کامل در همان فرم ساخت انجام می‌شود (عنوان، دسته،
@@ -129,10 +146,24 @@ return new class extends Component
 
         $article = Article::findOrFail($this->editingId);
 
+        $coverPath = $article->cover_image;
+
+        if ($this->coverImage !== null) {
+            // آپلود تازه جای تصویر قبلی را می‌گیرد؛ فایل قبلی بعد از
+            // ذخیره‌ی موفق فایل تازه پاک می‌شود.
+            $coverPath = $this->storeCoverImage();
+            Article::deleteUploadedCover($article->cover_image);
+        } elseif ($this->coverImagePath === null) {
+            // تصویر با دکمه‌ی «حذف تصویر» برداشته شده است.
+            Article::deleteUploadedCover($article->cover_image);
+            $coverPath = null;
+        }
+
         $article->update([
             'title' => $data['title'],
             'category' => $data['category'],
             'excerpt' => $data['excerpt'],
+            'cover_image' => $coverPath,
             'body' => $data['body'],
             'status' => $data['status'],
             // انتشارِ تازه زمان انتشار می‌خورد؛ برگشت به پیش‌نویس آن را
@@ -144,6 +175,16 @@ return new class extends Component
 
         $this->success("«{$data['title']}» بروزرسانی شد", 'با موفقیت', position: 'toast-bottom');
         $this->cancelEdit();
+    }
+
+    // فقط وضعیت فرم را پاک می‌کند؛ فایل روی دیسک هنگام ذخیره‌ی ویرایش
+    // پاک می‌شود و با «لغو» هیچ اتفاقی نمی‌افتد.
+    public function removeCoverImage(): void
+    {
+        $this->authorize('manage_articles');
+        $this->coverImage = null;
+        $this->coverImagePath = null;
+        $this->coverImageUrl = null;
     }
 
     public function togglePublish(int $id): void
@@ -182,9 +223,23 @@ return new class extends Component
             'title' => 'required|string|max:255',
             'category' => 'required|in:'.implode(',', array_keys(Article::CATEGORIES)),
             'excerpt' => 'nullable|string|max:500',
+            // SVG عمداً مجاز نیست: SVG آپلودشده می‌تواند اسکریپت داشته
+            // باشد و نمایش درون‌مرورگری‌اش stored XSS می‌شود.
+            'coverImage' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:2048',
             'body' => 'required|string',
             'status' => 'required|in:draft,published',
         ]);
+    }
+
+    private function storeCoverImage(): ?string
+    {
+        if ($this->coverImage === null) {
+            return null;
+        }
+
+        $path = $this->coverImage->store('article-covers', 'local');
+
+        return $path === false ? null : $path;
     }
 
     /**
@@ -221,6 +276,7 @@ return new class extends Component
     {
         return [
             ['key' => 'id', 'label' => '#', 'class' => 'w-1 hidden sm:table-cell'],
+            ['key' => 'cover_image', 'label' => 'تصویر', 'sortable' => false],
             ['key' => 'title', 'label' => 'عنوان', 'class' => 'flex-1'],
             ['key' => 'category', 'label' => 'دسته'],
             ['key' => 'status', 'label' => 'وضعیت'],
@@ -335,6 +391,18 @@ return new class extends Component
                     @error('excerpt') <span class="text-error text-xs">{{ $message }}</span> @enderror
                 </div>
                 <div>
+                    <x-file wire:model="coverImage" label="تصویر شاخص" accept="image/*" />
+                    @error('coverImage') <span class="text-error text-xs">{{ $message }}</span> @enderror
+                    @if($coverImage)
+                        <img src="{{ $coverImage->temporaryUrl() }}" alt="پیش‌نمایش تصویر شاخص" class="mt-2 w-32 h-20 object-cover rounded-lg" />
+                    @elseif($coverImageUrl)
+                        <div class="flex items-center gap-2 mt-2">
+                            <img src="{{ $coverImageUrl }}" alt="تصویر شاخص فعلی" class="w-32 h-20 object-cover rounded-lg" />
+                            <x-button wire:click="removeCoverImage" label="حذف تصویر" icon="o-trash" class="btn-ghost btn-sm text-error" />
+                        </div>
+                    @endif
+                </div>
+                <div>
                     <label class="label"><span class="label-text">متن مقاله</span></label>
                     <textarea wire:model="body" rows="8" class="textarea textarea-bordered w-full" placeholder="متن کامل مقاله..."></textarea>
                     @error('body') <span class="text-error text-xs">{{ $message }}</span> @enderror
@@ -356,6 +424,14 @@ return new class extends Component
             with-pagination
             per-page="perPage"
             :per-page-values="[10, 20, 50]">
+
+            @scope('cell_cover_image', $article)
+                @if($article->coverImageUrl())
+                    <img src="{{ $article->coverImageUrl() }}" alt="" class="w-12 h-12 object-cover rounded" />
+                @else
+                    <span class="text-base-content/30">—</span>
+                @endif
+            @endscope
 
             @scope('cell_category', $article)
                 {{ $article->categoryLabel() }}

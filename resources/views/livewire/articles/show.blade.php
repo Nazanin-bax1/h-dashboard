@@ -43,6 +43,10 @@ return new class extends Component
 
     <x-card shadow>
         @if($article)
+            @if($article->coverImageUrl())
+                <img src="{{ $article->coverImageUrl() }}" alt="{{ $article->title }}" class="w-full max-h-80 object-cover rounded-lg mb-4" />
+            @endif
+
             <div class="flex flex-wrap gap-2 items-center mb-2">
                 <span class="badge badge-outline">{{ $article->categoryLabel() }}</span>
                 @if($article->isPublished())

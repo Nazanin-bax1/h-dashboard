@@ -3,14 +3,28 @@
 use App\Models\Article;
 use App\Models\Unit;
 use App\Models\User;
+use Database\Seeders\ArticleSeeder;
 use Database\Seeders\PermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
 use Tests\Support\Concerns\InteractsWithTestSetup;
 use Tests\TestCase;
 
 uses(TestCase::class, RefreshDatabase::class, InteractsWithTestSetup::class);
+
+// تصویر JPEG یک‌در‌یک واقعی — `UploadedFile::fake()->image()` به GD نیاز
+// دارد و GD در CI نصب نیست، پس بایت‌های JPEG را مستقیم می‌سازیم.
+function fakeArticleCoverImage(): UploadedFile
+{
+    return UploadedFile::fake()->createWithContent(
+        'cover.jpg',
+        base64_decode('/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AvwH/2Q=='),
+        'image/jpeg',
+    );
+}
 
 beforeEach(function () {
     $this->seed(PermissionSeeder::class);
@@ -87,6 +101,65 @@ test('create published article sets published_at', function () {
 
     expect($article->status)->toBe('published')
         ->and($article->published_at)->not->toBeNull();
+});
+
+test('create article with a cover image', function () {
+    Storage::fake('local');
+    $this->actingAs($this->user);
+
+    Livewire::test('articles.index')
+        ->set('title', 'مقاله با تصویر')
+        ->set('category', 'news')
+        ->set('body', 'متن مقاله با تصویر')
+        ->set('status', 'published')
+        ->set('coverImage', fakeArticleCoverImage())
+        ->call('createArticle')
+        ->assertHasNoErrors();
+
+    $article = Article::query()->where('title', 'مقاله با تصویر')->firstOrFail();
+
+    expect($article->cover_image)->toStartWith('article-covers/');
+    Storage::disk('local')->assertExists($article->cover_image);
+});
+
+test('cover route serves the uploaded image', function () {
+    Storage::fake('local');
+    $this->actingAs($this->user);
+
+    Livewire::test('articles.index')
+        ->set('title', 'مقاله با تصویر')
+        ->set('category', 'news')
+        ->set('body', 'متن مقاله')
+        ->set('status', 'draft')
+        ->set('coverImage', fakeArticleCoverImage())
+        ->call('createArticle')
+        ->assertHasNoErrors();
+
+    $article = Article::query()->where('title', 'مقاله با تصویر')->firstOrFail();
+
+    $this->get(route('articles.cover', $article))->assertOk();
+});
+
+test('deleting an article removes its uploaded cover file', function () {
+    Storage::fake('local');
+    $this->actingAs($this->user);
+
+    Livewire::test('articles.index')
+        ->set('title', 'مقاله حذف‌شدنی با تصویر')
+        ->set('category', 'news')
+        ->set('body', 'متن مقاله')
+        ->set('status', 'draft')
+        ->set('coverImage', fakeArticleCoverImage())
+        ->call('createArticle')
+        ->assertHasNoErrors();
+
+    $article = Article::query()->where('title', 'مقاله حذف‌شدنی با تصویر')->firstOrFail();
+    Storage::disk('local')->assertExists($article->cover_image);
+
+    Livewire::test('articles.index')
+        ->call('delete', $article->id);
+
+    Storage::disk('local')->assertMissing($article->cover_image);
 });
 
 test('duplicate titles get unique slugs', function () {
@@ -265,4 +338,17 @@ test('validation rejects an empty title', function () {
         ->assertHasErrors(['title']);
 
     $this->assertDatabaseCount('articles', 0);
+});
+
+test('article seeder creates sample articles with covers', function () {
+    $this->seed(ArticleSeeder::class);
+
+    expect(Article::count())->toBe(8)
+        ->and(Article::query()->where('status', 'published')->count())->toBe(6)
+        ->and(Article::query()->whereNull('cover_image')->count())->toBe(0);
+
+    // اجرای دوباره مقاله‌ی تکراری نمی‌سازد.
+    $this->seed(ArticleSeeder::class);
+
+    expect(Article::count())->toBe(8);
 });

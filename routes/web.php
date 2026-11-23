@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\HardwareExportController;
 use App\Http\Controllers\Api\PersonsExportController;
 use App\Http\Controllers\Api\UnitsExportController;
+use App\Http\Controllers\ArticleCoverController;
 use App\Http\Controllers\BackupController;
 use App\Http\Controllers\TicketAttachmentController;
 use App\Models\User;
@@ -169,8 +170,11 @@ Route::middleware('auth')->group(function () {
         // بخش مقالات (بلاگ داخلی داشبورد) — گیت منو و گیت هر دو روت یکی
         // است: `manage_articles`. مقالات سراسری‌اند و unit-scoped نیستند؛
         // نویسنده کاربرِ سازنده است و وضعیت انتشار پیش‌نویس/منتشرشده دارد.
+        // تصویر شاخص آپلودشده روی دیسک خصوصی `local` است و فقط از روت
+        // احرازشده‌ی `articles.cover` سرو می‌شود (#1276).
         Route::middleware('role_or_permission:manage_articles')->group(function () {
             Route::livewire('/articles', 'articles.index')->name('articles.index');
+            Route::get('/articles/{article}/cover', [ArticleCoverController::class, 'show'])->name('articles.cover');
             Route::livewire('/articles/{id}', 'articles.show')->name('articles.show');
         });
 

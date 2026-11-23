@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * @property int $id
@@ -14,6 +15,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property string $slug
  * @property string $category
  * @property string|null $excerpt
+ * @property string|null $cover_image
  * @property string $body
  * @property string $status
  * @property Carbon|null $published_at
@@ -46,6 +48,7 @@ class Article extends Model
         'slug',
         'category',
         'excerpt',
+        'cover_image',
         'body',
         'status',
         'published_at',
@@ -75,6 +78,42 @@ class Article extends Model
                 $article->excerpt = static::excerptFromBody($article->body);
             }
         });
+
+        // حذف مقاله، فایل آپلودشده‌ی تصویر شاخص را هم از دیسک خصوصی
+        // پاک می‌کند؛ تصویرهای استاتیک سیدر (`images/...`) مال
+        // ریپو‌اند و دست نمی‌خورند.
+        static::deleting(function (Article $article): void {
+            static::deleteUploadedCover($article->cover_image);
+        });
+    }
+
+    /**
+     * URL نمایشی تصویر شاخص؛ `null` یعنی مقاله تصویری ندارد.
+     *
+     * مسیر `images/...` فایل استاتیک زیر `public/` است و با `asset()`
+     * سرو می‌شود؛ هر مسیر دیگری روی دیسک خصوصی `local` است و فقط از
+     * روت احرازشده‌ی `articles.cover` سرو می‌شود.
+     */
+    public function coverImageUrl(): ?string
+    {
+        if ($this->cover_image === null || $this->cover_image === '') {
+            return null;
+        }
+
+        if (str_starts_with($this->cover_image, 'images/')) {
+            return asset($this->cover_image);
+        }
+
+        return route('articles.cover', $this->id);
+    }
+
+    public static function deleteUploadedCover(?string $path): void
+    {
+        if ($path === null || $path === '' || str_starts_with($path, 'images/')) {
+            return;
+        }
+
+        Storage::disk('local')->delete($path);
     }
 
     public function user(): BelongsTo
