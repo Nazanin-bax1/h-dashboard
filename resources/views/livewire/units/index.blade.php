@@ -7,6 +7,7 @@ use App\Models\UnitTypeRelationship;
 use App\Services\AccessService;
 use App\Services\UnitDeletionImpact;
 use App\Services\UnitDeletionService;
+use App\Traits\ClampsPageSize;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Livewire\Attributes\Locked;
 use Livewire\Component;
@@ -15,6 +16,7 @@ use Mary\Traits\Toast;
 
 return new class extends Component
 {
+    use ClampsPageSize;
     use Toast;
     use WithPagination;
 
@@ -144,7 +146,7 @@ return new class extends Component
         $direction = ($this->sortBy['direction'] ?? 'asc') === 'desc' ? 'desc' : 'asc';
         $query->orderBy($column, $direction);
 
-        return $query->paginate($this->perPage);
+        return $query->paginate($this->pageSize());
     }
 
     /**
@@ -397,10 +399,12 @@ return new class extends Component
             }
 
             // #817: descendant-cycle guard, parity with UnitController::update.
+            // #1737: structural variant — an inactive descendant still counts,
+            // and this surface must not drift from the API's forbidden set.
             // editingId is now #[Locked], but the check is still load-bearing:
             // a client can re-parent a unit under its own descendant.
             if ($this->editingId) {
-                $forbiddenIds = Unit::descendantIds($this->editingId)->push($this->editingId)->all();
+                $forbiddenIds = Unit::structuralDescendantIds($this->editingId)->push($this->editingId)->all();
                 if (in_array((int) $this->parent_id, array_map('intval', $forbiddenIds), true)) {
                     $this->error('نمی‌توان واحد را زیرمجموعه خودش یا یکی از زیرمجموعه‌هایش قرار داد.');
 
