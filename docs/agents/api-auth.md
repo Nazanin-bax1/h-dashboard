@@ -18,6 +18,14 @@
 - Livewire components expect session-based auth. **API tokens are NOT accepted** for Livewire pages.
 - Login form at `/login`. API login: `POST /api/login` with `n_code` + `password` (throttled 5/min per account **and** per IP; the per-account key is the submitted `n_code`, so rotating IPs does not reset it — #1666).
 
+### Token lifecycle & pruning (#1820)
+
+`POST /api/login` mints a fresh `flutter-app` token on every call and does **not** revoke the caller's previous tokens (a single-live-token policy is an open product decision; revoking on role/permission change is #1823). The 24-hour lifetime is enforced by the **guard** off `created_at`, not by `expires_at`: `createToken()` is called without the third argument, so every token this app mints has `expires_at = NULL`.
+
+- `sanctum:prune-expired` runs daily at 05:30 (between `imports:prune-sheets` 05:15 and `reports:generate-daily` 06:00) with Sanctum's default 24-hour grace, so a row is deleted once `expires_at` is more than 24h past **or** `created_at` is more than `expiration + 24h` old — 48 hours with the default `SANCTUM_TOKEN_EXPIRATION=1440`.
+- Password change deletes **all** of the user's tokens (#678/#1030); logout deletes only the caller's current token (#1071). Neither path is a substitute for the prune.
+- `SANCTUM_TOKEN_EXPIRATION=0` disables guard expiry, and the command then skips the config-based branch with a warning (the `expires_at` branch still runs).
+
 ### Cookie-authenticated `/api/*` calls from the web UI (#1399, #1532)
 
 The GIS dashboard and the Zabbix pages call `/api/gis/*` and `/api/zabbix/*` with the **session cookie and no `Authorization` header**. Sanctum only runs the stateful pipeline for such a request when its `Referer`/`Origin` host is in `config('sanctum.stateful')`; otherwise every call answers `401 {"message":"Unauthenticated."}`.
@@ -56,7 +64,7 @@ Sanctum middleware semantics: **`ability:a,b` = ANY one of them**, **`abilities:
 - Groups that also carry `role_or_permission:*` need **both** — token ability and Spatie permission — or the request is 403.
 - **Read and write ticket groups are independent (#895).** The reads sit in `ability:tickets:read` + `role_or_permission:view_assigned_tickets|view_all_tickets`; the writes sit in their **own** `abilities:tickets:write` group plus a per-route `permission:*`, and **no write route requires `tickets:read`**. They used to be nested inside the read group, and because nested middleware is AND, a token that satisfied `tickets:write` but not `tickets:read` — which is exactly what `getApiTokenAbilities()` mints for the seeded `user` role, holding `create_ticket` alone — was rejected with `Invalid ability provided.` on every write. `abilities:tickets:write` + `permission:*` per route is load-bearing and must stay on every write.
 - **Notification writes are split from reads (#1002, superseding the #837 arrangement).** `POST /api/notifications/{id}/read` and `POST /api/notifications/read-all` sit in their own group behind `abilities:notifications:write`, and `getApiTokenAbilities()` mints **both** `notifications:read` and `notifications:write`. Tokens minted before the split carry only `read` and get a 403 on the POSTs until they are re-minted — that is expected, not a bug to route around.
-- Tokens are **scoped and revoked on password change** (#678) on **both** password-change paths: the self-service form (`resources/views/livewire/auth/changepassword.blade.php`) and an admin reset through `users.index`'s `updateUser()` (#1030) each `delete()` **all** of the account's Sanctum tokens (today the Flutter app's; legacy `map-dashboard` tokens from before #1428 die with them), so the two paths stay in lockstep. The admin path is guarded on an actually-changed password: a profile/role edit that leaves the password untouched keeps every token alive. API tests use **real Bearer tokens** with explicit abilities, not bare `Sanctum::actingAs()` — pattern in `tests/Feature/ApiAbilityTest.php`.
+- Tokens are **scoped and revoked on password change** (#678) on **both** password-change paths: the self-service form (`resources/views/livewire/auth/changepassword.blade.php`) and an admin reset through `users.index`'s `updateUser()` (#1030) each `delete()` **all** of the account's Sanctum tokens (today the Flutter app's; legacy `map-dashboard` tokens from before #1428 die with them), so the two paths stay in lockstep. The admin path is guarded on an actually-changed password: a profile/role edit that leaves the password untouched does not revoke by itself. Separately (#1823), an edit that **changes the holder's effective API ability set** — a role/permission change through `users.index`, a role permission change through `roles.index`, or a role deletion — deletes that holder's tokens (on any change, grant or revoke, so token abilities always equal the holder's current abilities); a privilege-neutral edit (no-op, rename-only, unit-only) revokes nothing. API tests use **real Bearer tokens** with explicit abilities, not bare `Sanctum::actingAs()` — pattern in `tests/Feature/ApiAbilityTest.php`.
 
 
 **Hardware routes require full auth:** `auth` + `role_or_permission:manage_hardware`. A guest-bypassing middleware alias used to sit here and was removed in #1287 — do not reintroduce a middleware that skips `auth()->check()` for guests; its test was pinning 200-for-guests.
@@ -130,4 +138,4 @@ REST API endpoints for the Flutter mobile app (`/api/notifications/*`):
 
 Controller: `App\Http\Controllers\Api\NotificationController`. Requires Sanctum auth.
 
-> **Sanctum token expiration** reduced from 7 days (10080 min) to 24 hours (1440 min). Configurable via `SANCTUM_TOKEN_EXPIRATION` env var.
+> **Sanctum token expiration** is 24 hours (1440 min), configurable via the `SANCTUM_TOKEN_EXPIRATION` env var. Expiry is applied by the guard off `created_at`, and expired rows are pruned daily — see [Token lifecycle & pruning](#token-lifecycle--pruning-1820).
