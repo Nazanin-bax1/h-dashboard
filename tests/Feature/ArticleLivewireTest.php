@@ -299,6 +299,28 @@ test('search filters the article list by title', function () {
         ->assertDontSee('خبر سلامت');
 });
 
+test('percent wildcards in search do not match every article', function () {
+    $this->actingAs($this->user);
+
+    Article::factory()->create(['title' => 'آموزش شبکه', 'user_id' => $this->user->id]);
+
+    Livewire::test('articles.index')
+        ->set('search', '%%')
+        ->assertDontSee('آموزش شبکه');
+});
+
+test('underscore in search matches only a literal underscore', function () {
+    $this->actingAs($this->user);
+
+    Article::factory()->create(['title' => 'Qwx_One', 'user_id' => $this->user->id]);
+    Article::factory()->create(['title' => 'QwxXOne', 'user_id' => $this->user->id]);
+
+    Livewire::test('articles.index')
+        ->set('search', 'Qwx_One')
+        ->assertSee('Qwx_One')
+        ->assertDontSee('QwxXOne');
+});
+
 test('changing the search resets to the first page', function () {
     $this->actingAs($this->user);
 

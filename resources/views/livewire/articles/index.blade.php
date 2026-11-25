@@ -2,6 +2,7 @@
 
 use App\Models\Article;
 use App\Support\ActorLabel;
+use App\Traits\PersianNormalizer;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Auth;
 use Livewire\Attributes\Locked;
@@ -13,6 +14,7 @@ use Mary\Traits\Toast;
 
 return new class extends Component
 {
+    use PersianNormalizer;
     use Toast;
     use WithFileUploads;
     use WithPagination;
@@ -303,7 +305,10 @@ return new class extends Component
             // جستجوی ساده روی عنوان، هم‌راستا با maintenance.index — بدون
             // ستون folded: برای یک جستجوی عنوانِ ساده، ستون generated و
             // ایندکس trgm اضافه نمی‌شود.
-            $query->where('title', 'LIKE', '%'.$this->search.'%');
+            // Issue #1722 (رفع‌شده در #1775 برای جستجوی سراسری): «%» و «_»
+            // در ورودی کاربر متاکاراکتر LIKE‌ اند، نه متن عادی — فقط escape
+            // می‌شوند؛ نرمالایز نمی‌شوند چون ستون folded ندارد.
+            $query->where('title', 'LIKE', '%'.self::escapeLikeWildcards($this->search).'%');
         }
 
         return $query->orderByDesc('created_at')->orderByDesc('id')->paginate($this->perPage);
