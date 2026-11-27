@@ -83,19 +83,18 @@ return new class extends Component
             })
             ->when($this->selectedUnitId, fn ($q) => $q->where('unit_id', $this->selectedUnitId));
 
+        // #1942 — window membership is overlap, not "starts inside": a todo
+        // that began before `from` but is still live in the window belongs to
+        // the report, and so does one that runs past `to`. `end_at IS NULL` is
+        // open-ended (#1792), never out of range. The upper bound sits on
+        // `start_at` only — a todo starting after `to` is outside the window.
         if ($from = JalaliDateRange::parse($this->dateFrom)) {
-            $query->where('start_at', '>=', $from);
+            $query->where(function ($q) use ($from) {
+                $q->whereNull('end_at')->orWhere('end_at', '>=', $from);
+            });
         }
         if ($to = JalaliDateRange::parse($this->dateTo, endOfDay: true)) {
-            // #1792 — a todo with no end date is open-ended, not out of range.
-            // The upper bound on start_at keeps the window honest for those rows
-            // too: without it a dateless todo starting after `to` would count in
-            // completed/pending while `byDay` (which only materialises from..to)
-            // has no day for it.
-            $query->where('start_at', '<=', $to)
-                ->where(function ($q) use ($to) {
-                    $q->where('end_at', '<=', $to)->orWhereNull('end_at');
-                });
+            $query->where('start_at', '<=', $to);
         }
 
         $aggregates = $this->aggregatePayload($accessibleIds, $query);
@@ -162,17 +161,22 @@ return new class extends Component
         $data = $cache->remember(
             'report_todos',
             \App\Support\ScopeCacheKey::hash($accessibleIds),
-            function () use ($accessibleIds, $query): array {
+            function () use ($query): array {
                 $now = now();
                 $completed = (clone $query)->where('is_completed', true)->count();
                 $pending = (clone $query)->where('is_completed', false)->count();
                 $overdue = (clone $query)->where('is_completed', false)
                     ->whereNotNull('end_at')->where('end_at', '<', $now)->count();
 
-                $byUnit = Todo::selectRaw('COALESCE(units.name, ?) as unit_name, COUNT(*) as count', ['نامشخص'])
-                    ->whereIn('todos.unit_id', $accessibleIds)
-                    ->when($this->selectedUnitId, fn ($q) => $q->where('todos.unit_id', $this->selectedUnitId))
+                // #1858 — the unit bars describe the same window as the totals:
+                // cloning the filtered query carries the scope, `selectedUnitId`
+                // and #1792's open-ended `end_at` arm in one place, so a new
+                // filter on `$query` reaches `byUnit` for free. `leftJoin`, never
+                // `join`: a todo whose unit row is missing still lands in
+                // «نامشخص» instead of silently dropping out of the sum.
+                $byUnit = (clone $query)
                     ->leftJoin('units', 'todos.unit_id', '=', 'units.id')
+                    ->selectRaw('COALESCE(units.name, ?) as unit_name, COUNT(*) as count', ['نامشخص'])
                     ->groupBy('unit_name')
                     ->pluck('count', 'unit_name')
                     ->toArray();
@@ -211,7 +215,15 @@ return new class extends Component
                 'unit' => $this->selectedUnitId,
                 'from' => $this->dateFrom,
                 'to' => $this->dateTo,
+                // #1942 — the window predicate became overlap; nothing bumps the
+                // version on deploy, so the key changes to keep a pre-fix payload
+                // out of the 10-minute TTL (same precedent as #1794).
+                'window' => 'overlap',
                 'hierarchy' => $cache->getVersion('unit_hierarchy'),
+                // #1858 — `byUnit` moved from all-time to windowed and nothing
+                // bumps the version on deploy; without this discriminator the
+                // pre-fix payload survives the 10-minute TTL (#1794 precedent).
+                'byunit' => 'windowed',
             ],
         );
 

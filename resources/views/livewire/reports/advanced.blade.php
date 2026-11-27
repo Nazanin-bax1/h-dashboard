@@ -39,8 +39,6 @@ return new class extends Component
 
     public string $statusFilter = 'all';
 
-    public $units = [];
-
     /** Issue #819 — see the dashboard's `emptyScope` banner for the rationale. */
     public bool $emptyScope = false;
 
@@ -56,26 +54,7 @@ return new class extends Component
         $this->dateFrom = Jalalian::fromCarbon(now()->subDays(30))->format('Y/m/d');
         $this->dateTo = Jalalian::fromCarbon(now())->format('Y/m/d');
 
-        $accessibleIds = app(AccessService::class)->accessibleUnitIds();
-        $this->emptyScope = $accessibleIds === [];
-        if ($accessibleIds === []) {
-            $this->units = [];
-        } else {
-            // Issue #1348: versioned read on the shared `report_units`
-            // namespace (same writers as ReportController::units()). The
-            // distinguishing extra is load-bearing: without it this payload
-            // would share a key with the controller's differently-shaped
-            // payload for the same scope. The scope hash replaces the raw
-            // hand-rolled hash — this line is also #1349's fix, subsumed
-            // here while PR #1353 is still open. 300 seconds is 5 minutes.
-            $this->units = app(CacheInvalidationServiceInterface::class)->remember('report_units', ScopeCacheKey::hash($accessibleIds), function () use ($accessibleIds) {
-                return Unit::whereIn('id', $accessibleIds)
-                    ->select('id', 'name', 'parent_id')
-                    ->orderBy('name')
-                    ->get()
-                    ->toArray();
-            }, 5, ['site' => 'advanced_report_units']);
-        }
+        $this->emptyScope = app(AccessService::class)->accessibleUnitIds() === [];
     }
 
     /**
@@ -88,6 +67,40 @@ return new class extends Component
     private function dateRange(): ?array
     {
         return JalaliDateRange::range($this->dateFrom, $this->dateTo);
+    }
+
+    /**
+     * #1898: the accessible unit list is VIEW DATA, never public state — every
+     * round trip used to serialize ~834 units into the snapshot. Read through the
+     * same versioned `report_units` cache; `#[Computed]` memoizes one read per
+     * request, so the root select and the two cascading lists share it.
+     *
+     * @return list<array{id: int, name: string, parent_id: int|null}>
+     */
+    #[Livewire\Attributes\Computed]
+    public function units(): array
+    {
+        $accessibleIds = app(AccessService::class)->accessibleUnitIds();
+
+        if ($accessibleIds === []) {
+            return [];
+        }
+
+        // Issue #1348: versioned read on the shared `report_units` namespace (same
+        // writers as ReportController::units()). The distinguishing extra is
+        // load-bearing: without it this payload would share a key with the
+        // controller's differently-shaped payload for the same scope. 300 seconds
+        // is 5 minutes.
+        /** @var list<array{id: int, name: string, parent_id: int|null}> $units */
+        $units = app(CacheInvalidationServiceInterface::class)->remember('report_units', ScopeCacheKey::hash($accessibleIds), function () use ($accessibleIds) {
+            return Unit::whereIn('id', $accessibleIds)
+                ->select('id', 'name', 'parent_id')
+                ->orderBy('name')
+                ->get()
+                ->toArray();
+        }, 5, ['site' => 'advanced_report_units']);
+
+        return $units;
     }
 
     #[Livewire\Attributes\Computed]
@@ -276,6 +289,9 @@ return new class extends Component
                 // start_at, and nothing bumps the version on deploy, so the key
                 // must change to keep the pre-fix payload out of the 10-minute TTL.
                 'date_column' => $this->reportType === 'todos' ? 'start_at' : 'created_at',
+                // #1942 — the todos window predicate became overlap; the key
+                // changes so a pre-fix payload is not served for its 10-minute TTL.
+                'window' => 'overlap',
             ],
         );
 
@@ -301,11 +317,20 @@ return new class extends Component
         $dateColumn = $this->reportType === 'todos' ? 'start_at' : 'created_at';
 
         // فیلتر تاریخ (ورودی شمسی)
-        if ($from) {
-            $query->where($dateColumn, '>=', $from);
-        }
+        // #1942 — todos use overlap semantics: started on/before `to` and not
+        // ended before `from` (no end date = open-ended, #1792). The tickets
+        // branch keeps its point-in-time `created_at` bounds.
         if ($to) {
             $query->where($dateColumn, '<=', $to);
+        }
+        if ($from) {
+            if ($this->reportType === 'todos') {
+                $query->where(function ($q) use ($from) {
+                    $q->whereNull('end_at')->orWhere('end_at', '>=', $from);
+                });
+            } else {
+                $query->where($dateColumn, '>=', $from);
+            }
         }
 
         // فیلتر واحد (سلسله‌مراتبی)
@@ -513,7 +538,7 @@ return new class extends Component
                 <label class="font-bold text-xs">واحد اصلی</label>
                 <select class="select select-bordered select-sm w-full" wire:model.live="rootUnitId">
                     <option value="">همه</option>
-                    @foreach($units as $u)
+                    @foreach($this->units as $u)
                     <option value="{{ $u['id'] }}">{{ $u['name'] }}</option>
                     @endforeach
                 </select>

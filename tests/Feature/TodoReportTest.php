@@ -17,6 +17,10 @@ use Tests\TestCase;
  * null arm, so every todo with no end date vanished from completed/pending,
  * the daily series and the row list. `end_at = null` means open-ended, not
  * out of range — and it is still never overdue.
+ *
+ * Issue #1942 — the window is now overlap (`start_at <= to` and not ended
+ * before `from`), so `test_todo_ending_after_the_range_is_excluded` became
+ * `..._is_included`; the null arm and `byDay`'s `start_at` anchor stay.
  */
 class TodoReportTest extends TestCase
 {
@@ -119,21 +123,41 @@ class TodoReportTest extends TestCase
         $this->assertSame(1, $payload['pending'], 'but it is still open work');
     }
 
-    public function test_todo_ending_after_the_range_is_excluded(): void
+    public function test_todo_ending_after_the_range_is_included(): void
     {
         ['user' => $user, 'unit' => $unit] = $this->createUserWithUnit(['manage_personnel']);
         $this->actingAs($user);
 
-        $this->createTodo($unit, [
+        // #1942 — overlap supersedes #1792's containment guard: running past
+        // `to` is not a reason to drop a todo that is live inside the window.
+        $todo = $this->createTodo($unit, [
             'start_at' => now()->subDays(2)->startOfDay(),
             'end_at' => now()->addDays(60),
         ]);
 
         $payload = $this->payload();
 
-        $this->assertSame(0, $payload['pending']);
+        $this->assertSame(1, $payload['pending']);
         $this->assertSame(0, $payload['completed']);
+        $this->assertSame([$todo->id], array_column($payload['items'], 'id'));
+    }
+
+    public function test_todo_ending_before_the_range_is_excluded(): void
+    {
+        ['user' => $user, 'unit' => $unit] = $this->createUserWithUnit(['manage_personnel']);
+        $this->actingAs($user);
+
+        // Default mount window opens at now - 30 days; this one closed long before.
+        $this->createTodo($unit, [
+            'start_at' => now()->subDays(60)->startOfDay(),
+            'end_at' => now()->subDays(40),
+        ]);
+
+        $payload = $this->payload();
+
+        $this->assertSame(0, $payload['completed'] + $payload['pending'], 'a todo that ended before `from` is outside');
         $this->assertSame([], $payload['items']);
+        $this->assertSame([], $payload['byUnit'], 'and it has no unit bar either');
     }
 
     public function test_todo_ending_inside_the_range_is_counted(): void
@@ -165,6 +189,64 @@ class TodoReportTest extends TestCase
         $this->assertSame(0, $payload['completed'] + $payload['pending'], 'outside the window is outside the counts');
         $this->assertSame([], $payload['items']);
         $this->assertSame(0, array_sum(array_column($payload['byDay'], 'count')), 'and it has no day on the axis');
+        $this->assertSame([], $payload['byUnit'], 'and it has no unit bar either');
+    }
+
+    public function test_by_unit_counts_only_the_todos_inside_the_range(): void
+    {
+        ['user' => $user, 'unit' => $root] = $this->createUserWithUnit(['manage_personnel']);
+        $this->actingAs($user);
+
+        // Fixed names: the factory randomises them, and the assertion is on the
+        // bucket labels. A rename does not change the unit id in scope.
+        $root->update(['name' => 'واحد ریشه']);
+
+        // Fixtures before the first render: `accessibleUnitIds()` memoises per
+        // request, and the child must be in scope through the hierarchy CTE.
+        $child = Unit::factory()->create(['name' => 'واحد فرزند', 'parent_id' => $root->id]);
+
+        $from = now()->subDays(3);
+        $to = now()->subDay();
+
+        $this->createTodo($root, ['start_at' => now()->subDays(2), 'end_at' => now()->subDays(2)]);
+        $this->createTodo($child, ['start_at' => now()->subDays(2), 'end_at' => null]);
+        // Outside the window, inside the scope: must not appear in a unit bar.
+        $this->createTodo($child, ['start_at' => now()->subDays(20), 'end_at' => now()->subDays(19)]);
+
+        $payload = Livewire::test('reports.todos')
+            ->set('dateFrom', Jalalian::fromCarbon($from)->format('Y/m/d'))
+            ->set('dateTo', Jalalian::fromCarbon($to)->format('Y/m/d'))
+            ->instance()->chartPayload();
+
+        $expected = ['واحد فرزند' => 1, 'واحد ریشه' => 1];
+        ksort($expected);
+        ksort($payload['byUnit']);
+
+        $this->assertSame($expected, $payload['byUnit'], 'only the in-range todo lands in a unit bar');
+        $this->assertSame(
+            $payload['completed'] + $payload['pending'],
+            array_sum($payload['byUnit']),
+            'the unit bars must add up to the range total (the payload has no `total` key)',
+        );
+    }
+
+    public function test_by_unit_is_empty_for_a_window_with_no_todos(): void
+    {
+        ['user' => $user, 'unit' => $unit] = $this->createUserWithUnit(['manage_personnel']);
+        $this->actingAs($user);
+
+        $this->createTodo($unit, [
+            'start_at' => now()->subDays(3)->startOfDay(),
+            'end_at' => now()->subDays(2),
+        ]);
+
+        $payload = Livewire::test('reports.todos')
+            ->set('dateFrom', Jalalian::fromCarbon(now()->addDays(60))->format('Y/m/d'))
+            ->set('dateTo', Jalalian::fromCarbon(now()->addDays(70))->format('Y/m/d'))
+            ->instance()->chartPayload();
+
+        $this->assertSame(0, $payload['completed'] + $payload['pending']);
+        $this->assertSame([], $payload['byUnit'], 'an empty window has no unit bars');
     }
 
     public function test_dateless_todo_respects_the_unit_scope(): void

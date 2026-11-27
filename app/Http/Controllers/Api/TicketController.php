@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\UnitScopedRequest;
 use App\Http\Resources\TicketDetailResource;
 use App\Http\Resources\TicketResource;
+use App\Jobs\SendNotificationJob;
 use App\Models\Ticket;
 use App\Models\User;
 use App\Rules\TicketTargetUnit;
@@ -195,10 +196,17 @@ class TicketController extends Controller
         }
 
         $validated = $request->validate([
-            'assignee_id' => 'required|exists:users,id',
+            'assignee_id' => ['required', Rule::exists('users', 'id')->whereNull('deleted_at')],
         ]);
 
         $assignee = User::find($validated['assignee_id']);
+
+        // #1857: defense in depth. Step 1 already rejects a deactivated id, but a
+        // soft delete landing between the validation query and this lookup would
+        // leave $assignee null and turn the #205 scope check below into a 500.
+        if ($assignee === null) {
+            return response()->json(['message' => 'Assignee is deactivated or does not exist.'], 422);
+        }
 
         // Issue #205: the assignee must belong to the ticket's organizational scope
         $assigneeUnitIds = $assignee->units()->pluck('units.id')->toArray();
@@ -226,6 +234,21 @@ class TicketController extends Controller
 
         if ($transition !== self::TRANSITION_OK) {
             return response()->json(['message' => 'Closed tickets cannot be reassigned.'], 422);
+        }
+
+        // #1909: the assignee is the only party this hand-off never told.
+        // No afterCommit wrapper: atomicTransition() has already committed here.
+        if ((int) $validated['assignee_id'] !== (int) $request->user()->id) {
+            SendNotificationJob::dispatch(
+                (int) $validated['assignee_id'],
+                'ticket_assigned',
+                'تیکت به شما ارجاع شد',
+                "تیکت #{$ticket->ticket_code} به شما ارجاع شد - موضوع: {$ticket->subject}",
+                'o-ticket',
+                'text-info',
+                route('tickets.inbox', $ticket->id),
+                ['ticket_id' => (int) $ticket->id],
+            );
         }
 
         return response()->json([
